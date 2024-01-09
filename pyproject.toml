@@ -9,10 +9,12 @@ authors = [
 
 [tool.poetry.dependencies]
 python = ">=3.8.1,<4.0"
-alembic = "^1.10.2"
-asyncpg = "^0.28.0"
+alembic = "^1.12.1"
+asyncpg = "^0.29.0"
 aiosqlite = "^0.19.0"
-sqlalchemy = "^2.0.8"
+sqlalchemy = "^2.0.23"
+pydantic = ">=2.0,<3"
+pydantic-settings = "^2.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.2.1"
@@ -25,10 +27,10 @@ tox = "^3.25.0"
 bandit = "^1.7.4"
 python-semantic-release = "^7.33.2"
 greenlet = "^2.0.2"
-fastapi = "^0.95.0"
 orjson = "^3.8.14"
 mypy = "^1.4.1"
 opentelemetry-instrumentation-sqlalchemy = "^0.40b0"
+lagom = "^2.5.0"
 
 [tool.poetry.group.docs.dependencies]
 mkdocs = "^1.4.2"

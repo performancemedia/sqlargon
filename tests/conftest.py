@@ -52,8 +52,8 @@ def user_repository_class(user_model):
 
 
 @pytest_asyncio.fixture()
-async def user_repository(user_repository_class, session):
-    yield user_repository_class(session)
+async def user_repository(user_repository_class, db):
+    yield user_repository_class(db)
 
 
 @pytest.fixture

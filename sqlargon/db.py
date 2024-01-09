@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import functools
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Awaitable, Callable, TypeVar
+from contextvars import ContextVar
+from typing import Any, AsyncGenerator, Callable, Sequence, TypeVar
 
+import sqlalchemy as sa
+from sqlalchemy import Executable, Result
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from typing_extensions import ParamSpec
 
-from .repository import SQLAlchemyRepository
+from . import Base
 from .settings import DatabaseSettings
-from .uow import SQLAlchemyUnitOfWork
 from .util import json_dumps, json_loads
 
 try:
@@ -21,19 +22,19 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-def configure_repository_class(dialect: str) -> None:
-    if dialect == "postgresql":
-        from .dialects.postgres import configure_postgres_dialect
-
-        configure_postgres_dialect(SQLAlchemyRepository)
-
-    elif dialect == "sqlite":
-        from .dialects.sqlite import configure_sqlite_dialect
-
-        configure_sqlite_dialect(SQLAlchemyRepository)
-
-
 class Database:
+    Model = Base
+    Column = sa.Column
+
+    supports_returning: bool = False
+    supports_on_conflict: bool = False
+    default_execution_options: tuple[tuple, dict] = ((), {})
+
+    insert = staticmethod(sa.insert)
+    update = staticmethod(sa.update)
+    delete = staticmethod(sa.delete)
+    select = staticmethod(sa.select)
+
     def __init__(
         self,
         url: str,
@@ -52,19 +53,62 @@ class Database:
             bind=self.engine, expire_on_commit=False
         )
         self.session = asynccontextmanager(self.session_factory)
-        configure_repository_class(self.engine.url.get_dialect().name)
+        self._current_session: ContextVar[AsyncSession | None] = ContextVar(
+            "_current_session", default=None
+        )
+        dialect = self.engine.url.get_dialect().name
+        if dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+
+            self.insert = staticmethod(insert)
+            self.supports_returning = True
+            self.supports_on_conflict = True
+
+        elif dialect == "sqlite":
+            import sqlite3
+
+            from sqlalchemy.dialects.sqlite import insert
+
+            self.insert = staticmethod(insert)
+            self.supports_returning = sqlite3.sqlite_version > "3.35"
+            self.supports_on_conflict = True
 
         if SQLAlchemyInstrumentor is not None:
             SQLAlchemyInstrumentor().instrument(engine=self.engine.sync_engine)
 
+    def set_current_session(self) -> None:
+        self.current_session = self.session()
+
+    @property
+    def current_session(self) -> AsyncSession:
+        s = self._current_session.get()
+        if s is None:
+            raise AttributeError("Invalid session scope")
+        return s
+
+    @current_session.setter
+    def current_session(self, value) -> None:
+        self._current_session.set(value)
+
+    @current_session.deleter
+    def current_session(self) -> None:
+        self._current_session.set(None)
+
+    @property
+    def in_session_scope(self) -> bool:
+        return self._current_session.get() is not None
+
     async def session_factory(self) -> AsyncGenerator[AsyncSession, None]:
         async with self.session_maker() as session:
+            self.current_session = session
             try:
                 yield session
                 await session.commit()
             except:  # noqa
                 await session.rollback()
                 raise
+            finally:
+                self.current_session = None
 
     @classmethod
     def from_settings(cls, settings: DatabaseSettings):
@@ -75,47 +119,47 @@ class Database:
         settings = DatabaseSettings(**kwargs)
         return cls.from_settings(settings)
 
-    def inject_session(
-        self, func: Callable[P, Awaitable[R]]
-    ) -> Callable[P, Awaitable[R]]:
-        @functools.wraps(func)
-        async def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
-            if kwargs.get("session") is None:
-                async with self.session() as session:
-                    kwargs["session"] = session
-                    return await func(*args, **kwargs)
-            else:
-                return await func(*args, **kwargs)
+    @asynccontextmanager
+    async def _transaction(self, nested: bool = True):
 
-        return wrapped
+        if nested:
+            async with self.current_session.begin_nested():
+                yield
+        else:
+            async with self.current_session.begin():
+                yield
 
-    def inject_repository(
-        self, cls: type[SQLAlchemyRepository], name: str = "repository"
-    ):
-        def wrapper(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
-            @functools.wraps(func)
-            async def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
-                if kwargs.get(name) is None:
-                    async with self.session() as session:
-                        repository = cls(session=session)
-                        kwargs[name] = repository
-                        return await func(*args, **kwargs)
-                else:
-                    return await func(*args, **kwargs)
+    @asynccontextmanager
+    async def transaction(self):
+        async with self.current_session.begin_nested() as t:
+            yield t
 
-            return wrapped
+    async def execute_query(self, query: Executable, *args, **kwargs) -> Result:
+        if not args or kwargs:
+            args, kwargs = self.default_execution_options
+        if self.in_session_scope:
+            return await self.current_session.execute(query, *args, **kwargs)
+        else:
+            async with self.session() as session:
+                return session.execute(query, *args, **kwargs)
 
-        return wrapper
+    async def add(self, obj: Model, flush: bool = True) -> None:
+        self.current_session.add(obj)
+        if flush:
+            await self.current_session.flush()
 
-    def inject_uow(self, cls: type[SQLAlchemyUnitOfWork], name: str = "uow"):
-        def wrapper(func: Callable[P, Awaitable[R]]):
-            @functools.wraps(func)
-            async def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
-                if kwargs.get(name) is None:
-                    instance = cls(self.session_maker)
-                    kwargs[name] = instance
-                return await func(*args, **kwargs)
+    async def flush(self, objects: Sequence | None = None) -> None:
+        await self.current_session.flush(objects)
 
-            return wrapped
+    async def commit(self, raise_on_exception: bool = True) -> None:
+        try:
+            await self.current_session.commit()
+        except:  # noqa
+            await self.current_session.rollback()
+            if raise_on_exception:
+                raise
 
-        return wrapper
+    async def stream_scalars(self, query, *args, **kwargs):
+        if not args or kwargs:
+            args, kwargs = self.default_execution_options
+        return await self.current_session.stream_scalars(query, *args, **kwargs)

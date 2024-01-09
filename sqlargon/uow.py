@@ -1,12 +1,17 @@
 import asyncio
 from abc import ABC, abstractmethod
+from typing import Dict, TypeVar, get_type_hints
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from sqlargon import Database, SQLAlchemyRepository
+
+U = TypeVar("U", bound="AbstractUoW")
 
 
 class AbstractUoW(ABC):
     @abstractmethod
-    async def __aenter__(self) -> None:
+    async def __aenter__(self: U) -> U:
         raise NotImplementedError
 
     @abstractmethod
@@ -24,19 +29,26 @@ class AbstractUoW(ABC):
 
 class SQLAlchemyUnitOfWork(AbstractUoW):
     def __init__(
-        self, session_factory, autocommit: bool = True, raise_on_exc: bool = True
-    ):
-        self.session_factory = session_factory
+        self,
+        db: Database,
+        autocommit: bool = True,
+        raise_on_exc: bool = True,
+    ) -> None:
+        self.db = db
         self.autocommit = autocommit
         self.raise_on_exc = raise_on_exc
+        self._repositories: Dict[str, SQLAlchemyRepository] = {}
+
+    async def __aenter__(self):
+        self.db.set_current_session()
+        return self
 
     @property
     def session(self) -> AsyncSession:
-        return self._session
-
-    async def __aenter__(self):
-        self._session = self.session_factory()
-        return self
+        session = self.db.current_session
+        if session is None:
+            raise AttributeError("Session context is not set")
+        return session
 
     async def _close(self, *exc) -> None:
         try:
@@ -46,8 +58,9 @@ class SQLAlchemyUnitOfWork(AbstractUoW):
                 await self.commit()
         finally:
             await self.session.close()
+            self.db.current_session = None
 
-    async def __aexit__(self, *exc):
+    async def __aexit__(self, *exc) -> None:
         task = asyncio.create_task(self._close(*exc))
         await asyncio.shield(task)
 
@@ -61,3 +74,11 @@ class SQLAlchemyUnitOfWork(AbstractUoW):
 
     async def rollback(self) -> None:
         await self.session.rollback()
+
+    def __getattr__(self, item: str) -> SQLAlchemyRepository:
+        if item not in self._repositories:
+            repository_cls = get_type_hints(self).get(item)
+            if repository_cls is None:
+                raise AttributeError("Could not resolve type annotation for %s", item)
+            self._repositories[item] = repository_cls(self.db)
+        return self._repositories[item]

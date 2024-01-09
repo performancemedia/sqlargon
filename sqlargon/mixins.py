@@ -1,43 +1,39 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
+from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy import FetchedValue
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import declarative_mixin, declared_attr
+from sqlalchemy.orm import Mapped, declarative_mixin
 
 from .types import GUID, GenerateUUID, Timestamp, now
 
 
 @declarative_mixin
 class UUIDModelMixin:
-    @declared_attr
-    def id(cls):
-        return sa.Column(
-            GUID(), primary_key=True, server_default=GenerateUUID(), nullable=False
-        )
+    id: Mapped[UUID] = sa.Column(
+        GUID(), primary_key=True, server_default=GenerateUUID(), nullable=False
+    )
 
 
 @declarative_mixin
 class CreatedUpdatedMixin:
-    @declared_attr
-    def created_at(cls):
-        return sa.Column(
-            Timestamp(),
-            server_default=now(),
-            default=lambda: datetime.now(tz=timezone.utc),
-            nullable=False,
-        )
-
-    @declared_attr
-    def updated_at(cls):
-        return sa.Column(
-            Timestamp(),
-            server_default=now(),
-            onupdate=now(),
-            default=lambda: datetime.now(tz=timezone.utc),
-            nullable=False,
-            server_onupdate=FetchedValue(),
-        )
+    created_at: Mapped[datetime] = sa.Column(
+        Timestamp(),
+        server_default=now(),
+        default=lambda: datetime.now(tz=timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = sa.Column(
+        Timestamp(),
+        server_default=now(),
+        onupdate=now(),
+        default=lambda: datetime.now(tz=timezone.utc),
+        nullable=False,
+        server_onupdate=FetchedValue(),
+    )
 
     @hybrid_property
     def is_new(self):
@@ -46,11 +42,9 @@ class CreatedUpdatedMixin:
 
 @declarative_mixin
 class SoftDeleteMixin:
-    @declared_attr
-    def tombstone(cls):
-        return sa.Column(
-            sa.Boolean(), nullable=False, default=False, server_default=sa.sql.false()
-        )
+    tombstone: Mapped[bool] = sa.Column(
+        sa.Boolean(), nullable=False, default=False, server_default=sa.sql.false()
+    )
 
     @hybrid_property
     def not_deleted(self):
