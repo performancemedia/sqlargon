@@ -1,10 +1,6 @@
 from uuid import uuid4
 
 
-def test_supports_returning(user_repository):
-    assert user_repository.supports_returning
-
-
 async def test_empty_user_repo(user_repository):
     users = await user_repository.all()
     assert users == []

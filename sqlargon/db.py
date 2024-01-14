@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import Any, AsyncGenerator, Callable, Sequence, TypeVar
+from typing import Any, Callable, TypeVar
 
 import sqlalchemy as sa
-from sqlalchemy import Executable, Result
+from sqlalchemy import Executable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from typing_extensions import ParamSpec
 
-from . import Base
+from .orm import Base, ORMModel
 from .settings import DatabaseSettings
 from .util import json_dumps, json_loads
 
@@ -20,6 +21,8 @@ except ImportError:
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+M = TypeVar("M", bound=ORMModel)
 
 
 class Database:
@@ -56,11 +59,12 @@ class Database:
         self._current_session: ContextVar[AsyncSession | None] = ContextVar(
             "_current_session", default=None
         )
+
         dialect = self.engine.url.get_dialect().name
         if dialect == "postgresql":
             from sqlalchemy.dialects.postgresql import insert
 
-            self.insert = staticmethod(insert)
+            self.insert = staticmethod(insert)  # type: ignore[assignment]
             self.supports_returning = True
             self.supports_on_conflict = True
 
@@ -69,38 +73,39 @@ class Database:
 
             from sqlalchemy.dialects.sqlite import insert
 
-            self.insert = staticmethod(insert)
+            self.insert = staticmethod(insert)  # type: ignore[assignment]
             self.supports_returning = sqlite3.sqlite_version > "3.35"
             self.supports_on_conflict = True
 
         if SQLAlchemyInstrumentor is not None:
             SQLAlchemyInstrumentor().instrument(engine=self.engine.sync_engine)
 
-    def set_current_session(self) -> None:
-        self.current_session = self.session()
+    async def create_all(self):
+        async with self.engine.begin() as conn:
+            await conn.run_sync(self.Model.metadata.create_all)
+
+    async def drop_all(self):
+        async with self.engine.begin() as conn:
+            await conn.run_sync(self.Model.metadata.drop_all)
 
     @property
-    def current_session(self) -> AsyncSession:
-        s = self._current_session.get()
-        if s is None:
-            raise AttributeError("Invalid session scope")
-        return s
+    def in_session_context(self) -> bool:
+        return self._current_session.get() is not None
+
+    @property
+    def current_session(self):
+        return self._current_session.get()
 
     @current_session.setter
-    def current_session(self, value) -> None:
-        self._current_session.set(value)
+    def current_session(self, session: AsyncSession | None):
+        self._current_session.set(session)
 
     @current_session.deleter
-    def current_session(self) -> None:
+    def current_session(self):
         self._current_session.set(None)
-
-    @property
-    def in_session_scope(self) -> bool:
-        return self._current_session.get() is not None
 
     async def session_factory(self) -> AsyncGenerator[AsyncSession, None]:
         async with self.session_maker() as session:
-            self.current_session = session
             try:
                 yield session
                 await session.commit()
@@ -108,7 +113,7 @@ class Database:
                 await session.rollback()
                 raise
             finally:
-                self.current_session = None
+                await session.close()
 
     @classmethod
     def from_settings(cls, settings: DatabaseSettings):
@@ -119,47 +124,41 @@ class Database:
         settings = DatabaseSettings(**kwargs)
         return cls.from_settings(settings)
 
-    @asynccontextmanager
-    async def _transaction(self, nested: bool = True):
-
-        if nested:
-            async with self.current_session.begin_nested():
-                yield
-        else:
-            async with self.current_session.begin():
-                yield
-
-    @asynccontextmanager
-    async def transaction(self):
-        async with self.current_session.begin_nested() as t:
-            yield t
-
-    async def execute_query(self, query: Executable, *args, **kwargs) -> Result:
+    async def execute(self, query: Executable, *args, **kwargs):
         if not args or kwargs:
             args, kwargs = self.default_execution_options
-        if self.in_session_scope:
+        if self.current_session:
             return await self.current_session.execute(query, *args, **kwargs)
-        else:
-            async with self.session() as session:
-                return session.execute(query, *args, **kwargs)
 
-    async def add(self, obj: Model, flush: bool = True) -> None:
-        self.current_session.add(obj)
-        if flush:
-            await self.current_session.flush()
+        async with self.session() as session:
+            return await session.execute(query, *args, **kwargs)
 
-    async def flush(self, objects: Sequence | None = None) -> None:
-        await self.current_session.flush(objects)
+    async def execute_from_connection(self, query: Executable, *args, **kwargs):
+        if not args or kwargs:
+            args, kwargs = self.default_execution_options
+        if self.current_session:
+            connection = await self.current_session.connection()
+            return await connection.execute(query, *args, **kwargs)
 
-    async def commit(self, raise_on_exception: bool = True) -> None:
-        try:
-            await self.current_session.commit()
-        except:  # noqa
-            await self.current_session.rollback()
-            if raise_on_exception:
-                raise
+        async with self.session() as session:
+            connection = await session.connection()
+            return await connection.execute(query, *args, **kwargs)
 
     async def stream_scalars(self, query, *args, **kwargs):
         if not args or kwargs:
             args, kwargs = self.default_execution_options
-        return await self.current_session.stream_scalars(query, *args, **kwargs)
+        if self.current_session:
+            async for row in self._stream_scalars(
+                self.current_session, query, *args, **kwargs
+            ):
+                yield row
+        else:
+            async with self.session() as session:
+                async for row in self._stream_scalars(session, query, *args, **kwargs):
+                    yield row
+
+    @staticmethod
+    async def _stream_scalars(session, query, *args, **kwargs):
+        async with session.stream_scalars(query, *args, **kwargs) as stream:
+            async for row in stream:
+                yield row
