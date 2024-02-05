@@ -103,6 +103,7 @@ line-ending = "auto"
 max-complexity = 8
 
 [tool.deptry.per_rule_ignores]
+DEP001 = ["fastapi"]
 DEP002 = ["alembic", "asyncpg", "aiosqlite"]
 DEP003 = ["sqlargon", "typing_extensions", "pydantic_core", "fastapi"]
 
