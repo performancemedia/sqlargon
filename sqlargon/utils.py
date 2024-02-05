@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic_core import to_jsonable_python
@@ -19,3 +20,7 @@ except ImportError:
 
     def json_loads(data: str) -> Any:
         return json.loads(data)
+
+
+def utc_now() -> datetime:
+    return datetime.now(tz=timezone.utc)

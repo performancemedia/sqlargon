@@ -36,6 +36,9 @@ async def test_bulk_update(user_repository):
     ]
     await user_repository.insert(users)
     await user_repository.bulk_update(values=users_update, on_={"name"})
-    assert 2 == await user_repository.count(
-        user_repository.model.last_name.in_(("Connor", "Carter"))
+    assert (
+        await user_repository.count(
+            user_repository.model.last_name.in_(("Connor", "Carter"))
+        )
+        == 2
     )

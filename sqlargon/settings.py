@@ -40,10 +40,10 @@ class DatabaseSettings(AbstractDbSettings):
     echo: bool = False
     isolation_level: Optional[str] = None
     json_serializer: ImportedType[Callable[[Any], str]] = Field(
-        "sqlargon.util:json_dumps"
+        "sqlargon.utils:json_dumps"
     )
     json_deserializer: ImportedType[Callable[[str], Any]] = Field(
-        "sqlargon.util:json_loads"
+        "sqlargon.utils:json_loads"
     )
     connect_args: Optional[dict[str, Any]] = None
     pool_settings: PoolSettings = Field(default_factory=PoolSettings)

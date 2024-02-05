@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+import functools
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any, Callable, TypeVar
@@ -10,9 +11,11 @@ from sqlalchemy import Executable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from typing_extensions import ParamSpec
 
+from . import SQLAlchemyRepository
 from .orm import Base, ORMModel
 from .settings import DatabaseSettings
-from .util import json_dumps, json_loads
+from .uow import SQLAlchemyUnitOfWork
+from .utils import json_dumps, json_loads
 
 try:
     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
@@ -90,10 +93,10 @@ class Database:
 
     @property
     def in_session_context(self) -> bool:
-        return self._current_session.get() is not None
+        return self.current_session is not None
 
     @property
-    def current_session(self):
+    def current_session(self) -> AsyncSession | None:
         return self._current_session.get()
 
     @current_session.setter
@@ -107,6 +110,7 @@ class Database:
     async def session_factory(self) -> AsyncGenerator[AsyncSession, None]:
         async with self.session_maker() as session:
             try:
+                self.current_session = session
                 yield session
                 await session.commit()
             except:  # noqa
@@ -114,6 +118,7 @@ class Database:
                 raise
             finally:
                 await session.close()
+                del self.current_session
 
     @classmethod
     def from_settings(cls, settings: DatabaseSettings):
@@ -132,6 +137,20 @@ class Database:
 
         async with self.session() as session:
             return await session.execute(query, *args, **kwargs)
+
+    async def execute_many(self, queries: Sequence[Executable], *args, **kwargs):
+        if not args or kwargs:
+            args, kwargs = self.default_execution_options
+        if self.current_session:
+            return (
+                await self.current_session.execute(query, *args, **kwargs)
+                for query in queries
+            )
+        else:
+            async with self.session() as session:
+                return (
+                    await session.execute(query, *args, **kwargs) for query in queries
+                )
 
     async def execute_from_connection(self, query: Executable, *args, **kwargs):
         if not args or kwargs:
@@ -162,3 +181,61 @@ class Database:
         async with session.stream_scalars(query, *args, **kwargs) as stream:
             async for row in stream:
                 yield row
+
+    async def commit(self):
+        if self.current_session:
+            return await self.current_session.commit()
+
+    def inject_session(
+        self, func: Callable[P, Awaitable[R]]
+    ) -> Callable[P, Awaitable[R]]:
+        @functools.wraps(func)
+        async def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+            if kwargs.get("session") is None:
+                async with self.session() as session:
+                    kwargs["session"] = session
+                    return await func(*args, **kwargs)
+            else:
+                return await func(*args, **kwargs)
+
+        return wrapped
+
+    def _inject_object(
+        self, cls: type[SQLAlchemyRepository] | type[SQLAlchemyUnitOfWork], name: str
+    ):
+        def wrapper(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+            @functools.wraps(func)
+            async def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+                if kwargs.get(name) is None:
+                    instance = cls(self)
+                    kwargs[name] = instance
+                return await func(*args, **kwargs)
+
+            return wrapped
+
+        return wrapper
+
+    def inject_repository(
+        self, cls: type[SQLAlchemyRepository], name: str = "repository"
+    ):
+        return self._inject_object(cls, name)
+
+    def inject_uow(self, cls: type[SQLAlchemyUnitOfWork], name: str = "uow"):
+        return self._inject_object(cls, name)
+
+    def Depends(
+        self, repository: type[SQLAlchemyRepository], with_session: bool = False
+    ) -> Any:
+        from fastapi import Depends
+
+        def wrapper():
+            return repository(self)
+
+        async def wrapper_with_session():
+            async with self.session():
+                yield repository(self)
+
+        if with_session:
+            return Depends(wrapper_with_session)
+
+        return Depends(wrapper)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from uuid import UUID
+from datetime import datetime
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy import FetchedValue
@@ -9,12 +9,17 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, declarative_mixin
 
 from .types import GUID, GenerateUUID, Timestamp, now
+from .utils import utc_now
 
 
 @declarative_mixin
 class UUIDModelMixin:
     id: Mapped[UUID] = sa.Column(
-        GUID(), primary_key=True, server_default=GenerateUUID(), nullable=False
+        GUID(),
+        primary_key=True,
+        default=uuid4,
+        server_default=GenerateUUID(),
+        nullable=False,
     )
 
 
@@ -23,14 +28,14 @@ class CreatedUpdatedMixin:
     created_at: Mapped[datetime] = sa.Column(
         Timestamp(),
         server_default=now(),
-        default=lambda: datetime.now(tz=timezone.utc),
+        default=utc_now,
         nullable=False,
     )
     updated_at: Mapped[datetime] = sa.Column(
         Timestamp(),
         server_default=now(),
         onupdate=now(),
-        default=lambda: datetime.now(tz=timezone.utc),
+        default=utc_now,
         nullable=False,
         server_onupdate=FetchedValue(),
     )

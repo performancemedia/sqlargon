@@ -12,7 +12,6 @@ T = TypeVar("T", bound=TypeAdapter)
 
 
 class Pydantic(TypeDecorator, Generic[P]):
-
     impl = JSON
     cache_ok = True
 

@@ -63,7 +63,7 @@ class SQLAlchemyRepository(Generic[Model]):
     def raw_query(self) -> str:
         return str(self.query)
 
-    def copy(self, query: ClauseElement | Callable) -> Self:
+    def copy(self, query: ClauseElement | Executable | Callable) -> Self:
         return self.__class__(self.db, query)
 
     def __call__(self, *args, **kwargs) -> Self:
@@ -110,7 +110,8 @@ class SQLAlchemyRepository(Generic[Model]):
     def on_conflict(self) -> OnConflict:
         return {
             "index_elements": [
-                c.name for c in self.model.__table__.primary_key.columns  # type: ignore[attr-defined]
+                c.name
+                for c in self.model.__table__.primary_key.columns  # type: ignore[attr-defined]
             ],
             "set_": self._get_default_set(),
         }
@@ -180,7 +181,7 @@ class SQLAlchemyRepository(Generic[Model]):
         if set_ is None:
             if isinstance(values, Mapping):
                 pk_columns = {c.name for c in self.model.__table__.primary_key.columns}  # type: ignore[attr-defined]
-                set_ = {k for k in values.keys() if k not in pk_columns}
+                set_ = {k for k in values if k not in pk_columns}
             else:
                 set_ = self.on_conflict.get("set_", self._get_default_set())
         if set_:
@@ -223,21 +224,17 @@ class SQLAlchemyRepository(Generic[Model]):
         query = self.query.options(*load_args_options, *load_kwargs_options)
         return self.copy(query)
 
-    def page(self, n: int = 1, page_size: int | None = None) -> Self:
-        page_size = page_size or type(self).default_page_size
-        offset = (n - 1) * page_size
-        return self.paginate(offset, page_size)
-
-    def paginate(self, offset: int | None = None, limit: int | None = None) -> Self:
+    def page(self, offset: int | None = None, limit: int | None = None) -> Self:
         query = self.query
 
         if offset is not None:
             query = query.offset(offset)  # type: ignore[attr-defined]
         if limit is not None:
             query = query.limit(limit)
-        if self.default_order_by is not None:
-            query = query.order_by(self.default_order_by)
         return self.copy(query)
+
+    async def paginate(self, offset: int = 0, limit: int = 100) -> Sequence[Model]:
+        return await self.page(offset, limit).all()
 
     async def count(self, *args: _ColumnExpressionArgument[bool], **kwargs: Any) -> int:
         query = self._select(sa.func.count()).select_from(self.model)
@@ -246,6 +243,11 @@ class SQLAlchemyRepository(Generic[Model]):
         if kwargs:
             query = query.filter_by(**kwargs)
         return (await self.execute_query(query)).scalar()
+
+    async def execute_many(
+        self, queries: Sequence[Executable], *args, **kwargs
+    ) -> Sequence[Result]:
+        return await self.db.execute_many(queries, *args, **kwargs)
 
     async def execute_query(self, query: Executable, *args, **kwargs) -> Result:
         return await self.db.execute(query, *args, **kwargs)
@@ -323,13 +325,12 @@ class SQLAlchemyRepository(Generic[Model]):
         return_results: bool = False,
         set_: set[str] | None = None,
         **kwargs: Any,
-    ) -> Sequence[Model] | None:
+    ) -> Sequence[Model] | Result:
         q = self.upsert(values, return_results=return_results, set_=set_, **kwargs)
         if return_results:
             return await q.all()
-        else:
-            await q.execute()
-        return None
+
+        return await q.execute()
 
     async def bulk_create(
         self,
@@ -357,3 +358,6 @@ class SQLAlchemyRepository(Generic[Model]):
         await self.db.execute_from_connection(
             self._update(self.model).where(*args, *where), values
         )
+
+    async def commit(self) -> None:
+        await self.db.commit()

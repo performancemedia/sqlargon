@@ -7,7 +7,7 @@
 ![Format](https://img.shields.io/pypi/format/sqlargon)
 ![PyPi](https://img.shields.io/pypi/v/sqlargon)
 ![Mypy](https://img.shields.io/badge/mypy-checked-blue)
-![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/charliermarsh/ruff/main/assets/badge/v1.json)](https://github.com/charliermarsh/ruff)
 [![security: bandit](https://img.shields.io/badge/security-bandit-yellow.svg)](https://github.com/PyCQA/bandit)
 
 *Wrapper around SQLAlchemy async session, core and native features for Postgres/SQLite*

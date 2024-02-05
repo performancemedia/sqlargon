@@ -90,5 +90,5 @@ class SQLAlchemyUnitOfWork(AbstractUnitOfWork):
             repository_cls = get_type_hints(self).get(item)
             if repository_cls is None:
                 raise TypeError("Could not resolve type annotation for %s", item)
-            self._repositories[item] = repository_cls(session=self._session)
+            self._repositories[item] = repository_cls(self.db)
         return self._repositories[item]
