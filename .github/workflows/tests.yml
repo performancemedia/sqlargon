@@ -13,11 +13,11 @@ jobs:
       - run: curl -sSL https://install.python-poetry.org | POETRY_VERSION=1.4.1 python3 -
       - run: poetry install --all-extras
       - run: poetry check
-      - run: poetry run ruff check .sqlargon/
+      - run: poetry run ruff check ./sqlargon
       - run: poetry run ruff format ./sqlargon --check
-      - run: poetry run mypy .sqlargon/
-      - run: poetry run deptry .sqlargon/
-      - run: poetry run bandit -r .sqlargon/
+      - run: poetry run mypy ./sqlargon
+      - run: poetry run deptry ./sqlargon
+      - run: poetry run bandit -r ./sqlargon
 
   build-unix:
     timeout-minutes: 30
