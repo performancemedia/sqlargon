@@ -298,7 +298,7 @@ class SQLAlchemyRepository(Generic[Model]):
         defaults.update(kwargs)
         obj = await self.insert(defaults, ignore_conflicts=True).one_or_none()
         if obj is None:
-            obj = await self.filter(**kwargs).one()
+            obj = await self.select().filter(**kwargs).one()
         return obj
 
     async def create(self, **kwargs) -> Model | None:

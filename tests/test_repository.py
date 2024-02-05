@@ -13,15 +13,15 @@ async def test_get_user(user_repository):
 
 async def test_create_user(user_repository):
     name = "John"
-    user = await user_repository.get_or_create(name=name)
+    user = await user_repository.create_or_update(name=name)
     assert user.name == name
 
 
 async def test_create_safe(user_repository, user_data):
-    user1 = await user_repository.create(**user_data)
+    user1 = await user_repository.create_or_update(**user_data)
     assert user1.id == user_data["id"]
-    user2 = await user_repository.create(**user_data)
-    assert user2 is None
+    user2 = await user_repository.create_or_update(**user_data)
+    assert user2.id == user1.id
 
 
 async def test_bulk_update(user_repository):
