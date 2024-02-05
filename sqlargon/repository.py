@@ -49,7 +49,8 @@ class SQLAlchemyRepository(Generic[Model]):
     def __init_subclass__(cls, **kwargs):
         if not (inspect.isabstract(cls) or hasattr(cls, "model")):
             cls.model = cls.__orig_bases__[0].__args__[0]
-            assert cls.model, f"Could not resolve model for {cls.__name__}"
+            if not (cls.model and issubclass(cls.model, ORMModel)):
+                raise TypeError(f"Could not resolve model for {cls.__name__}")
 
     def __init__(
         self,
