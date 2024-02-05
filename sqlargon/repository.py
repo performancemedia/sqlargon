@@ -263,7 +263,7 @@ class SQLAlchemyRepository(Generic[Model]):
         return (await self.execute()).scalar()
 
     async def scalars(self) -> ScalarResult:
-        return (await self.execute()).scalars()
+        return await self.db.scalars(self.query)
 
     async def unique(self) -> Any:
         return (await self.scalars()).unique()

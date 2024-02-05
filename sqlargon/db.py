@@ -154,6 +154,17 @@ class Database:
                     await session.execute(query, *args, **kwargs) for query in queries
                 )
 
+    async def scalars(self, query, *args, **kwargs):
+        if not args or kwargs:
+            args, kwargs = self.default_execution_options
+        if self.current_session:
+            return (
+                await self.current_session.execute(query, *args, **kwargs)
+            ).scalars()
+
+        async with self.session() as session:
+            return (await session.execute(query, *args, **kwargs)).scalars()
+
     async def execute_from_connection(self, query: Executable, *args, **kwargs):
         if not args or kwargs:
             args, kwargs = self.default_execution_options
