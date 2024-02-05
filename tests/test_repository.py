@@ -13,7 +13,7 @@ async def test_get_user(user_repository):
 
 async def test_create_user(user_repository):
     name = "John"
-    user = await user_repository.create(name=name)
+    user = await user_repository.get_or_create(name=name)
     assert user.name == name
 
 
