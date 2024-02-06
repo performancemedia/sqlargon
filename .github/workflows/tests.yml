@@ -2,7 +2,7 @@ name: Test
 on: [push, pull_request]
 jobs:
   lint:
-    runs-on: ubuntu-20.04
+    runs-on: ["ubuntu-22.04"]
     name: lint
     steps:
       - uses: actions/checkout@master
@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: ["ubuntu-20.04"]
+        os: ["ubuntu-22.04"]
         python: ["3.9", "3.10", "3.11", "3.12"]
 
     runs-on: ${{ matrix.os }}
