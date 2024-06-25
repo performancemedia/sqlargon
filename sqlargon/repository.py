@@ -46,7 +46,6 @@ if TYPE_CHECKING:
 Model = TypeVar("Model", bound=ORMModel)
 D = TypeVar("D", bound=Any)
 _T = TypeVar("_T", bound=Any)
-CursorPage = tuple[Sequence[Model], str]
 
 
 class OnConflict(TypedDict, total=False):
